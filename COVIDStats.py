@@ -2,9 +2,8 @@ import subprocess
 import mysql.connector as sql
 import time
 import pandas as pd
-from scipy.stats import chi2_contingency
+from scipy import stats
 import matplotlib.pyplot as plt
-
 
 
 class SQLDatabase:
@@ -47,13 +46,61 @@ class SQLDatabase:
 
 def test_variable(test_data):
 
-    data_columns = test_data.columns.tolist()
-    dep_var = data_columns[0]
-    indep_var = data_columns[1]
-    table = pd.crosstab(test_data[dep_var], test_data[indep_var])
+    print(test_data)
 
-    chi2, p, dof, expected = chi2_contingency(table)
-    print(f"Chi-Square test p-value[{dep_var} to {indep_var}]: {p:.2e}")
+
+def plot_data(dataframe, dep_var, indep_var):
+
+
+    combined_frame = pd.DataFrame({
+        entry: dataframe[dataframe[dep_var] == entry][indep_var].value_counts()
+        for entry in dataframe[dep_var].unique() if entry is not None
+    }).fillna(0) # Fill NaN with 0 for categories not present in one group
+
+    combined_frame.plot(
+        kind="bar",
+        figsize=(8, 6),
+        width=0.8
+    )
+
+    indep_var_label = convert_label(indep_var)
+    dep_var_label = convert_label(dep_var)
+
+    plt.title(f"{indep_var_label} by {dep_var_label}")
+    plt.xlabel(indep_var_label)
+    plt.ylabel("Count")
+    plt.xticks(rotation=45)
+    plt.tight_layout()
+    plt.show()
+
+
+def convert_label(text_str):
+    return ' '.join(text_str.split("_")).title()
+
+
+def analyze_stats(dataframe):
+
+    test_vars = ["age_group", "sex", "nationality"]
+    results = {
+        test_var: stats.chi2_contingency(
+            dataframe.pivot_table(
+                index=test_var,
+                columns="infection_status",
+                values="count",
+                aggfunc="sum",
+                fill_value=0
+            )
+        ) for test_var in test_vars
+    }
+
+    results_table = pd.DataFrame({
+        "Characteristic": test_var,
+        "Chi2": results[test_var][0],
+        "p": results[test_var][1]
+    } for test_var in test_vars)
+
+    print("Results for category")
+    print(results_table)
 
 
 def main():
@@ -62,19 +109,58 @@ def main():
     database_name = "corona-virus"
     table_name = "case_details"
 
-    database = SQLDatabase(
+    db = SQLDatabase(
         path=path,
         database_name=database_name
     )
 
     test_vars = ("sex", "current_status")
 
-    query_str = f"SELECT {', '.join(test_vars)} FROM {table_name}"
-    test_data = database.query(query_str)
+    # Retrieves data for M and F sexes, groups and counts entries, and orders them
+    case_data = db.query(f"""
+        SELECT
+            age,
+                CASE
+                    WHEN age BETWEEN 0 AND 17 THEN '0-17'
+                    WHEN age BETWEEN 18 AND 25 THEN '18-25'
+                    WHEN age BETWEEN 26 AND 35 THEN '26-35'
+                    WHEN age BETWEEN 36 AND 50 THEN '36-50'
+                    WHEN age BETWEEN 51 AND 65 THEN '51-65'
+                    WHEN age > 65 THEN '65+'
+                    ELSE 'unknown'
+                END AS age_group,
+            sex,
+            nationality,
+            current_status,
+                CASE
+                    WHEN current_status IN ('admitted', 'isolated', 'quarantined', 'in hospital') THEN 'infected'
+                    WHEN current_status IN ('dead', 'deceased', 'died') THEN 'deceased'
+                    WHEN current_status IN ('recovered') THEN 'recovered'
+                    ELSE 'unknown'
+                END AS infection_status,
+            COUNT(*) as count
+        FROM {table_name}
+        GROUP BY
+            age_group,
+            sex,
+            nationality,
+            infection_status
+        ORDER BY
+            age_group,
+            sex,
+            nationality,
+            infection_status     
+    ;""")
 
-    test_variable(test_data)
+    analyze_stats(case_data)
 
-    database.close()
+    plot_data(
+        dataframe=case_data,
+        dep_var="sex",
+        indep_var="infection_status"
+    )
+
+    db.close()
 
 
 if __name__ == "__main__":
