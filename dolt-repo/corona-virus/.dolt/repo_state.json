@@ -1,0 +1,20 @@
+{
+  "head": "refs/heads/master",
+  "remotes": {
+    "origin": {
+      "name": "origin",
+      "url": "https://doltremoteapi.dolthub.com/Liquidata/corona-virus",
+      "fetch_specs": [
+        "refs/heads/*:refs/remotes/origin/*"
+      ],
+      "params": {}
+    }
+  },
+  "backups": {},
+  "branches": {
+    "master": {
+      "head": "refs/heads/master",
+      "remote": "origin"
+    }
+  }
+}
