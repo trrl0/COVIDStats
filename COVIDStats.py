@@ -2,7 +2,7 @@ import subprocess
 import mysql.connector as sql
 import time
 import pandas as pd
-from scipy.stats import chi2_contingency
+from scipy import stats
 import matplotlib.pyplot as plt
 
 
@@ -48,10 +48,15 @@ def test_variable(test_data):
 
     print(test_data)
 
-    #plot_data(dep_var, indep_var, combined_frame)
+
+def plot_data(dataframe, dep_var, indep_var):
 
 
-def plot_data(dep_var, indep_var, combined_frame):
+    combined_frame = pd.DataFrame({
+        entry: dataframe[dataframe[dep_var] == entry][indep_var].value_counts()
+        for entry in dataframe[dep_var].unique() if entry is not None
+    }).fillna(0) # Fill NaN with 0 for categories not present in one group
+
     combined_frame.plot(
         kind="bar",
         figsize=(8, 6),
@@ -73,6 +78,31 @@ def convert_label(text_str):
     return ' '.join(text_str.split("_")).title()
 
 
+def analyze_stats(dataframe):
+
+    test_vars = ["age_group", "sex", "nationality"]
+    results = {
+        test_var: stats.chi2_contingency(
+            dataframe.pivot_table(
+                index=test_var,
+                columns="infection_status",
+                values="count",
+                aggfunc="sum",
+                fill_value=0
+            )
+        ) for test_var in test_vars
+    }
+
+    results_table = pd.DataFrame({
+        "Characteristic": test_var,
+        "Chi2": results[test_var][0],
+        "p": results[test_var][1]
+    } for test_var in test_vars)
+
+    print("Results for category")
+    print(results_table)
+
+
 def main():
 
     path = "./dolt-repo"
@@ -87,7 +117,7 @@ def main():
     test_vars = ("sex", "current_status")
 
     # Retrieves data for M and F sexes, groups and counts entries, and orders them
-    sex_data = db.query(f"""
+    case_data = db.query(f"""
         SELECT
             age,
                 CASE
@@ -114,10 +144,21 @@ def main():
             age_group,
             sex,
             nationality,
-            infection_status            
+            infection_status
+        ORDER BY
+            age_group,
+            sex,
+            nationality,
+            infection_status     
     ;""")
 
-    test_variable(sex_data)
+    analyze_stats(case_data)
+
+    plot_data(
+        dataframe=case_data,
+        dep_var="sex",
+        indep_var="infection_status"
+    )
 
     db.close()
 
