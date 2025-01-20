@@ -6,7 +6,6 @@ from scipy.stats import chi2_contingency
 import matplotlib.pyplot as plt
 
 
-
 class SQLDatabase:
     def __init__(self, path, database_name):
 
@@ -47,13 +46,31 @@ class SQLDatabase:
 
 def test_variable(test_data):
 
-    data_columns = test_data.columns.tolist()
-    dep_var = data_columns[0]
-    indep_var = data_columns[1]
-    table = pd.crosstab(test_data[dep_var], test_data[indep_var])
+    print(test_data)
 
-    chi2, p, dof, expected = chi2_contingency(table)
-    print(f"Chi-Square test p-value[{dep_var} to {indep_var}]: {p:.2e}")
+    #plot_data(dep_var, indep_var, combined_frame)
+
+
+def plot_data(dep_var, indep_var, combined_frame):
+    combined_frame.plot(
+        kind="bar",
+        figsize=(8, 6),
+        width=0.8
+    )
+
+    indep_var_label = convert_label(indep_var)
+    dep_var_label = convert_label(dep_var)
+
+    plt.title(f"{indep_var_label} by {dep_var_label}")
+    plt.xlabel(indep_var_label)
+    plt.ylabel("Count")
+    plt.xticks(rotation=45)
+    plt.tight_layout()
+    plt.show()
+
+
+def convert_label(text_str):
+    return ' '.join(text_str.split("_")).title()
 
 
 def main():
@@ -62,19 +79,47 @@ def main():
     database_name = "corona-virus"
     table_name = "case_details"
 
-    database = SQLDatabase(
+    db = SQLDatabase(
         path=path,
         database_name=database_name
     )
 
     test_vars = ("sex", "current_status")
 
-    query_str = f"SELECT {', '.join(test_vars)} FROM {table_name}"
-    test_data = database.query(query_str)
+    # Retrieves data for M and F sexes, groups and counts entries, and orders them
+    sex_data = db.query(f"""
+        SELECT
+            age,
+                CASE
+                    WHEN age BETWEEN 0 AND 17 THEN '0-17'
+                    WHEN age BETWEEN 18 AND 25 THEN '18-25'
+                    WHEN age BETWEEN 26 AND 35 THEN '26-35'
+                    WHEN age BETWEEN 36 AND 50 THEN '36-50'
+                    WHEN age BETWEEN 51 AND 65 THEN '51-65'
+                    WHEN age > 65 THEN '65+'
+                    ELSE 'unknown'
+                END AS age_group,
+            sex,
+            nationality,
+            current_status,
+                CASE
+                    WHEN current_status IN ('admitted', 'isolated', 'quarantined', 'in hospital') THEN 'infected'
+                    WHEN current_status IN ('dead', 'deceased', 'died') THEN 'deceased'
+                    WHEN current_status IN ('recovered') THEN 'recovered'
+                    ELSE 'unknown'
+                END AS infection_status,
+            COUNT(*) as count
+        FROM {table_name}
+        GROUP BY
+            age_group,
+            sex,
+            nationality,
+            infection_status            
+    ;""")
 
-    test_variable(test_data)
+    test_variable(sex_data)
 
-    database.close()
+    db.close()
 
 
 if __name__ == "__main__":
