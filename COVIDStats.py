@@ -2,8 +2,10 @@ import subprocess
 import mysql.connector as sql
 import time
 import pandas as pd
+from pandasgui import show as pdshow
 from scipy import stats
 import matplotlib.pyplot as plt
+import seaborn as sns
 
 
 class SQLDatabase:
@@ -31,46 +33,68 @@ class SQLDatabase:
                 database=self.database_name    # Default database name
             )
 
+            print(f"Dolt server connected successfully")
+
         except Exception as error:
-            print(f"Connection error: {error}")
+            print(f"Dolt server connection error: {error}")
 
     def query(self, query_str):
-        return pd.read_sql(query_str, self.connection)
+
+        try:
+            query_result = pd.read_sql(query_str, self.connection)
+            print("SQL queried successfully")
+            return query_result
+
+        except Exception as error:
+            print(f"SQL query error: {error}")
 
     def close(self):
-        self.connection.close()
 
-        # Stop the Dolt server process
-        self.process.terminate()
+        try:
+            self.connection.close()
 
+            # Stop the Dolt server process
+            self.process.terminate()
+            print(f"Dolt server terminated successfully")
 
-def test_variable(test_data):
-
-    print(test_data)
-
-
-def plot_data(dataframe, dep_var, indep_var):
+        except Exception as error:
+            print(f"Dolt server connection error: {error}")
 
 
-    combined_frame = pd.DataFrame({
-        entry: dataframe[dataframe[dep_var] == entry][indep_var].value_counts()
-        for entry in dataframe[dep_var].unique() if entry is not None
-    }).fillna(0) # Fill NaN with 0 for categories not present in one group
+def plot_data(data, dep_var, indep_var):
 
-    combined_frame.plot(
-        kind="bar",
-        figsize=(8, 6),
-        width=0.8
+    plt.figure(figsize=(10, 6))
+    sns.barplot(
+        data=data,
+        x="Value",  # Groups (e.g., "M" and "F")
+        y="Proportion",  # Height of the bars
+        hue="Outcome",  # Different bars within each group
     )
 
-    indep_var_label = convert_label(indep_var)
-    dep_var_label = convert_label(dep_var)
+    group_number = data["Outcome"].unique().shape[0]  # How many different bars will be generated, used for label pos
 
-    plt.title(f"{indep_var_label} by {dep_var_label}")
-    plt.xlabel(indep_var_label)
-    plt.ylabel("Count")
-    plt.xticks(rotation=45)
+    # Currently does not plot the sig_mark correctly if there are not an equal number of outcome rows for each dep_var. Need to fill in rows otherwise or calculate sig_mark pos differently
+
+    for index, row in data.iterrows():
+
+        sig_mark = "*" if row["p-Value"] < 0.05 else ""
+
+        plt.text(
+            x=index // group_number + (index % group_number),  # Adjust x-position for each bar
+            y=row["Proportion"] + 0.01,  # Slightly above the bar
+            s=sig_mark,  # Format p-value
+            ha='center', va='bottom', fontsize=9  # Center alignment
+        )
+
+    # Add labels and title
+    plt.title(f"Proportions of Outcomes by {dep_var.title()}", fontsize=16)
+    plt.xlabel(dep_var.title(), fontsize=12)
+    plt.ylabel("Proportions", fontsize=12)
+    plt.legend(title="Outcome")
+    plt.xticks(rotation=60, ha='right', va='top')
     plt.tight_layout()
+
+    # Show the plot
     plt.show()
 
 
@@ -78,29 +102,44 @@ def convert_label(text_str):
     return ' '.join(text_str.split("_")).title()
 
 
-def analyze_stats(dataframe):
+def analyze_stats(data, dep_var, indep_var):
 
-    test_vars = ["age_group", "sex", "nationality"]
-    results = {
-        test_var: stats.chi2_contingency(
-            dataframe.pivot_table(
-                index=test_var,
-                columns="infection_status",
-                values="count",
-                aggfunc="sum",
-                fill_value=0
-            )
-        ) for test_var in test_vars
-    }
+    dep_uniques = data[dep_var].unique()
+    indep_uniques = data[indep_var].unique()
 
-    results_table = pd.DataFrame({
-        "Characteristic": test_var,
-        "Chi2": results[test_var][0],
-        "p": results[test_var][1]
-    } for test_var in test_vars)
+    results = []
 
-    print("Results for category")
-    print(results_table)
+    for dep_unique in dep_uniques:
+        for indep_unique in indep_uniques:
+
+            # Create a contingency table to test individual values vs individual outcomes in infection_status
+            table = pd.DataFrame({
+                "Selected": [  # The subset of rows where value tested matches dep_unique
+                    data[(data[dep_var] == dep_unique) & (data[indep_var] == indep_unique)].shape[0],
+                    data[(data[dep_var] == dep_unique) & (data[indep_var] != indep_unique)].shape[0]
+                ],
+                "Not Selected": [  # The subset of rows where value tested does not match dep_unique
+                    data[(data[dep_var] != dep_unique) & (data[indep_var] == indep_unique)].shape[0],
+                    data[(data[dep_var] != dep_unique) & (data[indep_var] != indep_unique)].shape[0]
+                ]
+            })
+
+            if (table == 0).any().any():  # if there is a 0 in the contingency table, chi2 will not work
+                print(f"Warning: Contingency table [d:{dep_unique},i:{indep_unique}] contains zeroes and cannot be analyzed.")
+            else:
+
+                chi2, p, _, _ = stats.chi2_contingency(table)
+
+                results.append({
+                    "Column": dep_var,
+                    "Value": dep_unique,
+                    "Outcome": indep_unique,
+                    "Chi2": chi2,
+                    "p-Value": p,
+                    "Proportion": table["Selected"][0] / (table["Selected"][0]+table["Selected"][1])
+                })
+
+    return pd.DataFrame(results)
 
 
 def main():
@@ -113,8 +152,6 @@ def main():
         path=path,
         database_name=database_name
     )
-
-    test_vars = ("sex", "current_status")
 
     # Retrieves data for M and F sexes, groups and counts entries, and orders them
     case_data = db.query(f"""
@@ -151,16 +188,22 @@ def main():
             nationality,
             infection_status     
     ;""")
+    db.close()
 
-    analyze_stats(case_data)
+    dep_vars = ["age_group", "sex", "nationality"]
+    indep_var = "infection_status"
 
-    plot_data(
-        dataframe=case_data,
-        dep_var="sex",
-        indep_var="infection_status"
+    analysis_result = analyze_stats(
+        data=case_data,
+        dep_var=dep_vars[1],
+        indep_var=indep_var
     )
 
-    db.close()
+    plot_data(
+        data=analysis_result,
+        dep_var=dep_vars[1],
+        indep_var=indep_var
+    )
 
 
 if __name__ == "__main__":
